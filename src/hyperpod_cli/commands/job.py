@@ -422,8 +422,29 @@ def cancel_job(
 )
 @click.option(
     "--override-parameters",
-    multiple=True,
-    help="Optional. Override parameters for the recipe. Format: key=value. Can specify multiple key=value pairs.",
+    type=click.STRING,
+    help="""Optional. Override parameters for the recipe. Format: 'key1=value1 key2=value2 ...'
+    hyperpod start-job --recipe fine-tuning/llama/hf_llama3_8b_seq8192_gpu --override-parameters \
+'{
+  "+cluster.persistent_volume_claims.0.claimName":"fsx-claim",
+  "+cluster.persistent_volume_claims.0.mountPath":"data",
+  "recipes.run.name": "name",
+  "recipes.exp_manager.exp_dir": "/data/llama8b",
+  "recipes.trainer.num_nodes": 1,
+  "recipes.model.num_hidden_layers": 4,
+  "recipes.model.num_attention_heads": 8,
+  "recipes.model.max_context_width": 8192,
+  "recipes.model.max_position_embeddings": 8192,
+  "recipes.model.train_batch_size": 1,
+  "recipes.model.data.use_synthetic_data": true,
+  "instance_type": "g5.48xlarge",
+  "cluster": "k8s",
+  "cluster_type": "k8s",
+  "container": "container link",
+  "recipes.model.data.train_dir": "/data/datasets/wikicorpus_llama3_tokenized_8k/",
+  "recipes.model.data.val_dir": "/data/datasets/wikicorpus_llama3_tokenized_8k_val/",
+}'
+    """,
 )
 @click.option(
     "--debug",
@@ -457,7 +478,7 @@ def start_job(
     persistent_volume_claims: Optional[str],
     volumes: Optional[str],
     recipe: Optional[str],
-    override_parameters: Optional[Tuple[str]],
+    override_parameters: Optional[str],
     debug: bool,
 ):
     if debug:
@@ -474,9 +495,9 @@ def start_job(
         logger.error("Cannot start Training job due to AWS credentials issue")
         sys.exit(1)
 
-    if not namespace and config_file is None:
-        k8s_client = KubernetesClient()
-        namespace = k8s_client.get_current_context_namespace()
+    #if not namespace and config_file is None:
+    #    k8s_client = KubernetesClient()
+    #    namespace = k8s_client.get_current_context_namespace()
     
     launcher_config_path = None
     launcher_config_file_name = None
@@ -644,8 +665,8 @@ def start_job(
 
     start_training_job(recipe, override_parameters, job_name, config_file, launcher_config_path, launcher_config_file_name)
 
-    console_link = utils.get_cluster_console_url()
-    print(json.dumps({"Console URL": console_link}, indent=1, sort_keys=False))
+    #console_link = utils.get_cluster_console_url()
+    #print(json.dumps({"Console URL": console_link}, indent=1, sort_keys=False))
 
 
 def _override_or_remove(
@@ -739,13 +760,31 @@ def start_training_job(recipe, override_parameters, job_name, config_file, launc
             'cluster_type=k8s',
             f'base_results_dir={os.path.abspath(os.path.join(os.getcwd(), "results"))}'
         ]
+        print(override_parameters)
         if override_parameters:
-            cmd.extend(override_parameters)
+            try:
+                # Parse the JSON string into a dictionary
+                override_dict = json.loads(override_parameters)
+                
+                # Convert the dictionary into key=value pairs
+                for key, value in override_dict.items():
+                    if isinstance(value, str):
+                        # Ensure strings are properly quoted
+                        cmd.append(f'{key}="{value}"')
+                    else:
+                        cmd.append(f'{key}={value}')
+            except json.JSONDecodeError as e:
+                print(f"Invalid JSON format: {e}")
+                return
         
-        logger.debug(f"Executing command: {' '.join(cmd)}")
+        # For debugging: Print out the final command to check formatting
+        print(f"Final command: {' '.join(cmd)}")
+        
         execute_command(cmd, env)
 
     if job_name is not None and config_file is None:
         file_to_delete = os.path.join(launcher_config_path, launcher_config_file_name)
         if os.path.exists(file_to_delete):
             os.remove(file_to_delete)
+
+
